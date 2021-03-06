@@ -1,30 +1,146 @@
 ---
-title: "Showcase_metabolic"
+title: "Metabolic profile of different cells with PPP KOs"
 author: "Laura Andrea Barrero Guevara"
 date: "3/6/2021"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+### Description
+This showcase uses data from Seahorse analysis to plot the metabolic profile of different KO cell lines. The KO are in the Pentose Phosphate Pathway (PPP), therefore it is expected that the metabolic profile of the cell lines is different to the controls:
+
+- MOCK: Cell line obtained from the same transfection process as the KO cell lines that does not have a KO.
+- EV: Cell line obtained from the same transfection process as the KO cell lines that does not have a KO, but an empty vector. 
+- WT: Original cell line that did not have any transfection process.
+
+The cell lines have one gene KO from the following: 
+
+- RPE: Breaking point between the oxidative and non-oxidative phases of the PPP.
+- TALDO: From the non-oxidate phase of the PPP.
+- PGD: From the oxidative phase of the PPP.
+
+Each cell line was evaluated in different cell seeding concentrations (which is strongly related to the metabolic activity):
+
+- 50000 cells/well
+- 60000 cells/well
+- 70000 cells/well
+- 80000 cells/well
+
+### Set up
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(glue)
+library(arrow)
+library(knitr)
+
+#settings plot colors
+theme_set(theme_minimal())
+l_col = list()
+l_col$wt = "grey25"
+l_col$ev = "grey50"
+l_col$mock = "grey75"
+l_col$rpe = "#007965"
+l_col$taldo = "#f58634"
+l_col$pgd = "#ffcc29"
+
+#settings plot labs
+l_lab = list()
+l_lab$wt = "MCEC WT"
+l_lab$ev = "EV"
+l_lab$mock = "MOCK"
+l_lab$rpe = "RPE KO"
+l_lab$taldo = "TALDO KO"
+l_lab$pgd = "PGD KO"
 ```
 
-## R Markdown
+### Data 
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r, results='hide', message=FALSE, warning=FALSE}
+#Dataset is ETB_R
+l_data = list()
+l_data$var_all = read_feather(file = glue("data/data_all.feather"))
 ```
 
-## Including Plots
+### Data pre-processing
 
-You can also embed plots, for example:
+The data includes the metabolic information (OCR and ECAR) at two states: before and after a metabolic stressor. 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r, message=FALSE, warning=FALSE}
+phenotype_re_all = l_data$var_all %>%
+  select("gene","cell_line","cell_count","ecar_1_3","ecar_7_9") %>% 
+  pivot_longer(cols = c("ecar_1_3":"ecar_7_9"), names_to = "state", values_to = "ecar") %>%
+  mutate(state = fct_recode(state, "Baseline" = "ecar_1_3"),
+         state = fct_recode(state, "Stressed" = "ecar_7_9"))
+
+phenotype_ro_all = l_data$var_all %>%
+  select("gene","cell_line","cell_count","ocr_1_3","ocr_7_9") %>% 
+  pivot_longer(cols = c("ocr_1_3":"ocr_7_9"), names_to = "state", values_to = "ocr") %>%
+  mutate(state = fct_recode(state, "Baseline" = "ocr_1_3"),
+         state = fct_recode(state, "Stressed" = "ocr_7_9"))
+ocr = phenotype_ro_all$ocr
+phenotype_r_all = data.frame(phenotype_re_all,ocr)
+phenotype_r_mean = phenotype_r_all %>%
+  group_by(gene, cell_line, cell_count, state) %>%
+  summarise(ocr_mean = mean(ocr), ocr_sd = sd(ocr),
+            ecar_mean = mean(ecar), ecar_sd = sd(ecar))
+kable(phenotype_r_mean[1:16,])
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Metabolic Plot
+
+The plot shows the metabolic profile of the cells according to the OCR (Oxigen consumption rate) and ECAR (Extracellular acidification rate). For simplicity, it only includes results from one cell concentration) 
+
+
+#### Function
+
+```{r, message=FALSE, warning=FALSE}
+phenotype_plot = function(gene_n,cell_count_n) {
+phenotype_gene <- ggplot(data = phenotype_r_all %>%
+                           filter(gene == gene_n) %>%
+                           filter(cell_count == cell_count_n), 
+                         aes(y=ocr, x=ecar, colour=cell_line, shape = state)) +
+  geom_point(alpha = 0.4) +
+  scale_x_continuous(name="Extracellular acidification rate\n(mPh/min)") + 
+  scale_y_continuous(name="Oxygen consumption rate\n(pmol/min)") + 
+  geom_point(data = phenotype_r_mean%>%
+                           filter(gene == gene_n) %>%
+                           filter(cell_count == cell_count_n), 
+             aes(y=ocr_mean, x=ecar_mean, colour=cell_line, shape = state), size = 4) + 
+  geom_line(data = phenotype_r_mean%>%
+                           filter(gene == gene_n) %>%
+                           filter(cell_count == cell_count_n), 
+            aes(y=ocr_mean, x=ecar_mean, colour=cell_line, group=cell_line), linetype = "dashed") + 
+  scale_colour_manual(
+    name = ("Cell line"),
+    labels = c(l_lab[[gene_n]], l_lab$mock, l_lab$ev, l_lab$wt),
+    values = c(l_col[[gene_n]], l_col$mock, l_col$ev, l_col$wt)) +
+  scale_shape_manual(
+    name = ("State"),
+    values = c(1,19)) + 
+  annotate("text", label="Aerobic", x=-Inf, y=Inf, hjust = -1, vjust = 1) + 
+  annotate("text", label="Energetic", x=Inf, y=Inf, hjust = 1, vjust = 1) + 
+  annotate("text", label="Quiescent", x=-Inf, y=-Inf, hjust = -1, vjust = -1) + 
+  annotate("text", label="Glycolytic", x=Inf, y=-Inf, hjust = 1, vjust = -1)
+
+return(phenotype_gene)
+}
+```
+
+#### Plots for each KO {.tabset}
+
+##### TALDO
+```{r}
+phenotype_plot("taldo",60000)
+```
+
+##### RPE
+```{r}
+phenotype_plot("rpe",60000)
+```
+
+##### PGD
+```{r}
+phenotype_plot("pgd",60000)
+```
